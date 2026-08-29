@@ -13,7 +13,7 @@ enum class MessageType : uint8_t {
     SERVER_RESPONSE = 4  
 };
 
-enum class StatusCode : uint8_t {
+enum class StatusCode : uint16_t {
     SUCCESS = 200,
     BAD_REQUEST = 400,
     UNAUTHORIZED = 401,
