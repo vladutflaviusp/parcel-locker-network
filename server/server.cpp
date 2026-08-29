@@ -42,6 +42,21 @@ int main() {
 
     std::cout << "Parcel Locker Network - Server is running and listening on port " << SERVER_PORT << "...\n";
 
+    while (true) {
+        sockaddr_in clientAddr{};
+        int clientAddrSize = sizeof(clientAddr);
+        
+        SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
+        if (clientSocket == INVALID_SOCKET) {
+            std::cerr << "Accept failed: " << WSAGetLastError() << "\n";
+            continue;
+        }
+
+        std::cout << "Client connected successfully.\n";
+
+        closesocket(clientSocket);
+    }
+
     closesocket(serverSocket);
     WSACleanup();
 
