@@ -1,33 +1,92 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "../include/protocol.hpp"
 
 #pragma comment(lib, "ws2_32.lib")
 
-void handleMessage(SOCKET sock, const MessageHeader& header) {
+struct LockerServerState {
+    bool isOccupied = false;
+    char pin[5] = {0};
+};
+
+void sendResponse(SOCKET sock, MessageType type, uint8_t lockerId, StatusCode status, const char* data = nullptr, uint16_t dataLength = 0) {
+    MessageHeader responseHeader;
+    responseHeader.type = type;
+    responseHeader.lockerId = lockerId;
+    responseHeader.status = status;
+    responseHeader.dataLength = dataLength;
+
+    send(sock, reinterpret_cast<const char*>(&responseHeader), sizeof(MessageHeader), 0);
+
+    if (data && dataLength > 0) {
+        send(sock, data, dataLength, 0);
+    }
+}
+
+void handleMessage(SOCKET sock, const MessageHeader& header, std::vector<LockerServerState>& lockers) {
     std::cout << "Received message type: " << static_cast<int>(header.type) 
               << " for locker ID: " << static_cast<int>(header.lockerId) << "\n";
 
+    if (header.lockerId >= MAX_LOCKERS) {
+        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
+        return;
+    }
+
     switch (header.type) {
-        case MessageType::CLIENT_LOGIN:
+        case MessageType::CLIENT_LOGIN: {
             std::cout << "-> Processing client login...\n";
-            // Aici vom adăuga logica de autentificare
+            sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
             break;
+        }
 
-        case MessageType::DEPOSIT_PACKAGE:
-            std::cout << "-> Processing package deposit...\n";
-            // Aici vom citi datele suplimentare (PackageData) dacă dataLength > 0
+        case MessageType::DEPOSIT_PACKAGE: {
+            PackageData pkgData;
+            if (header.dataLength == sizeof(PackageData)) {
+                int bytesRead = recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
+                if (bytesRead == sizeof(PackageData)) {
+                    if (lockers[header.lockerId].isOccupied) {
+                        std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already full.\n";
+                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::BOX_FULL);
+                    } else {
+                        lockers[header.lockerId].isOccupied = true;
+                        std::memcpy(lockers[header.lockerId].pin, pkgData.pin, 5);
+                        std::cout << "-> Package deposited in locker " << static_cast<int>(header.lockerId) << " with PIN.\n";
+                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
+                    }
+                }
+            }
             break;
+        }
 
-        case MessageType::PICKUP_PACKAGE:
-            std::cout << "-> Processing package pickup...\n";
+        case MessageType::PICKUP_PACKAGE: {
+            PackageData pkgData;
+            if (header.dataLength == sizeof(PackageData)) {
+                int bytesRead = recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
+                if (bytesRead == sizeof(PackageData)) {
+                    if (!lockers[header.lockerId].isOccupied) {
+                        std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already empty.\n";
+                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
+                    } else if (std::memcmp(lockers[header.lockerId].pin, pkgData.pin, 5) != 0) {
+                        std::cout << "-> Incorrect PIN for locker " << static_cast<int>(header.lockerId) << ".\n";
+                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::UNAUTHORIZED);
+                    } else {
+                        lockers[header.lockerId].isOccupied = false;
+                        std::memset(lockers[header.lockerId].pin, 0, 5);
+                        std::cout << "-> Package picked up from locker " << static_cast<int>(header.lockerId) << ".\n";
+                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
+                    }
+                }
+            }
             break;
+        }
 
         default:
             std::cout << "-> Unknown message type received.\n";
+            sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::BAD_REQUEST);
             break;
     }
 }
@@ -68,6 +127,7 @@ int main() {
 
     std::cout << "Parcel Locker Network - Multiplexed Server is running on port " << SERVER_PORT << "...\n";
 
+    std::vector<LockerServerState> lockers(MAX_LOCKERS);
     std::vector<SOCKET> clientSockets;
 
     while (true) {
@@ -112,7 +172,7 @@ int main() {
                     it = clientSockets.erase(it);
                     std::cout << "Client disconnected. Total clients: " << clientSockets.size() << "\n";
                 } else if (bytesReceived == sizeof(MessageHeader)) {
-                    handleMessage(sock, header);
+                    handleMessage(sock, header, lockers);
                     ++it;
                 } else {
                     std::cerr << "Incomplete header received. Disconnecting client.\n";
