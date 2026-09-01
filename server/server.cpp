@@ -7,6 +7,31 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+void handleMessage(SOCKET sock, const MessageHeader& header) {
+    std::cout << "Received message type: " << static_cast<int>(header.type) 
+              << " for locker ID: " << static_cast<int>(header.lockerId) << "\n";
+
+    switch (header.type) {
+        case MessageType::CLIENT_LOGIN:
+            std::cout << "-> Processing client login...\n";
+            // Aici vom adăuga logica de autentificare
+            break;
+
+        case MessageType::DEPOSIT_PACKAGE:
+            std::cout << "-> Processing package deposit...\n";
+            // Aici vom citi datele suplimentare (PackageData) dacă dataLength > 0
+            break;
+
+        case MessageType::PICKUP_PACKAGE:
+            std::cout << "-> Processing package pickup...\n";
+            break;
+
+        default:
+            std::cout << "-> Unknown message type received.\n";
+            break;
+    }
+}
+
 int main() {
     WSADATA wsaData;
     int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -79,17 +104,20 @@ int main() {
         for (auto it = clientSockets.begin(); it != clientSockets.end(); ) {
             SOCKET sock = *it;
             if (FD_ISSET(sock, &readfds)) {
-                char buffer[512];
-                int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
+                MessageHeader header;
+                int bytesReceived = recv(sock, reinterpret_cast<char*>(&header), sizeof(MessageHeader), 0);
 
                 if (bytesReceived <= 0) {
-
                     closesocket(sock);
                     it = clientSockets.erase(it);
                     std::cout << "Client disconnected. Total clients: " << clientSockets.size() << "\n";
-                } else {
-                    std::cout << "Received " << bytesReceived << " bytes from client.\n";
+                } else if (bytesReceived == sizeof(MessageHeader)) {
+                    handleMessage(sock, header);
                     ++it;
+                } else {
+                    std::cerr << "Incomplete header received. Disconnecting client.\n";
+                    closesocket(sock);
+                    it = clientSockets.erase(it);
                 }
             } else {
                 ++it;
