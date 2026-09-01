@@ -1,4 +1,6 @@
 #include <iostream>
+#include <vector>
+#include <algorithm>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "../include/protocol.hpp"
@@ -6,7 +8,6 @@
 #pragma comment(lib, "ws2_32.lib")
 
 int main() {
-
     WSADATA wsaData;
     int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (wsaResult != 0) {
@@ -40,24 +41,66 @@ int main() {
         return 1;
     }
 
-    std::cout << "Parcel Locker Network - Server is running and listening on port " << SERVER_PORT << "...\n";
+    std::cout << "Parcel Locker Network - Multiplexed Server is running on port " << SERVER_PORT << "...\n";
+
+    std::vector<SOCKET> clientSockets;
 
     while (true) {
-        sockaddr_in clientAddr{};
-        int clientAddrSize = sizeof(clientAddr);
-        
-        SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
-        if (clientSocket == INVALID_SOCKET) {
-            std::cerr << "Accept failed: " << WSAGetLastError() << "\n";
-            continue;
+        fd_set readfds;
+        FD_ZERO(&readfds);
+
+        FD_SET(serverSocket, &readfds);
+        SOCKET maxSocket = serverSocket;
+
+        for (SOCKET sock : clientSockets) {
+            FD_SET(sock, &readfds);
+            if (sock > maxSocket) {
+                maxSocket = sock;
+            }
         }
 
-        std::cout << "Client connected successfully.\n";
+        int activity = select(0, &readfds, nullptr, nullptr, nullptr);
+        if (activity == SOCKET_ERROR) {
+            std::cerr << "Select failed: " << WSAGetLastError() << "\n";
+            break;
+        }
 
-        closesocket(clientSocket);
+        if (FD_ISSET(serverSocket, &readfds)) {
+            sockaddr_in clientAddr{};
+            int clientAddrSize = sizeof(clientAddr);
+            SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
+            
+            if (clientSocket != INVALID_SOCKET) {
+                clientSockets.push_back(clientSocket);
+                std::cout << "New client connected. Total clients: " << clientSockets.size() << "\n";
+            }
+        }
+
+        for (auto it = clientSockets.begin(); it != clientSockets.end(); ) {
+            SOCKET sock = *it;
+            if (FD_ISSET(sock, &readfds)) {
+                char buffer[512];
+                int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
+
+                if (bytesReceived <= 0) {
+
+                    closesocket(sock);
+                    it = clientSockets.erase(it);
+                    std::cout << "Client disconnected. Total clients: " << clientSockets.size() << "\n";
+                } else {
+                    std::cout << "Received " << bytesReceived << " bytes from client.\n";
+                    ++it;
+                }
+            } else {
+                ++it;
+            }
+        }
     }
 
     closesocket(serverSocket);
+    for (SOCKET sock : clientSockets) {
+        closesocket(sock);
+    }
     WSACleanup();
 
     return 0;
