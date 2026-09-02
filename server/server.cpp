@@ -1,6 +1,5 @@
 #include <iostream>
 #include <vector>
-#include <algorithm>
 #include <cstring>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -13,23 +12,25 @@ struct LockerServerState {
     char pin[5] = {0};
 };
 
-void sendResponse(SOCKET sock, MessageType type, uint8_t lockerId, StatusCode status, const char* data = nullptr, uint16_t dataLength = 0) {
-    MessageHeader responseHeader;
-    responseHeader.type = type;
-    responseHeader.lockerId = lockerId;
-    responseHeader.status = status;
-    responseHeader.dataLength = dataLength;
+void sendResponse(SOCKET sock, MessageType type, uint8_t lockerId, StatusCode status) {
+    MessageHeader response{};
+    response.type = type;
+    response.lockerId = lockerId;
+    response.status = status;
+    response.dataLength = 0;
 
-    send(sock, reinterpret_cast<const char*>(&responseHeader), sizeof(MessageHeader), 0);
-
-    if (data && dataLength > 0) {
-        send(sock, data, dataLength, 0);
-    }
+    send(sock, reinterpret_cast<const char*>(&response), sizeof(MessageHeader), 0);
 }
 
 void handleMessage(SOCKET sock, const MessageHeader& header, std::vector<LockerServerState>& lockers) {
     std::cout << "Received message type: " << static_cast<int>(header.type) 
               << " for locker ID: " << static_cast<int>(header.lockerId) << "\n";
+
+    PackageData pkgData{};
+    bool hasData = (header.dataLength == sizeof(PackageData));
+    if (hasData) {
+        recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
+    }
 
     if (header.lockerId >= MAX_LOCKERS) {
         sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
@@ -44,42 +45,30 @@ void handleMessage(SOCKET sock, const MessageHeader& header, std::vector<LockerS
         }
 
         case MessageType::DEPOSIT_PACKAGE: {
-            PackageData pkgData;
-            if (header.dataLength == sizeof(PackageData)) {
-                int bytesRead = recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
-                if (bytesRead == sizeof(PackageData)) {
-                    if (lockers[header.lockerId].isOccupied) {
-                        std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already full.\n";
-                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::BOX_FULL);
-                    } else {
-                        lockers[header.lockerId].isOccupied = true;
-                        std::memcpy(lockers[header.lockerId].pin, pkgData.pin, 5);
-                        std::cout << "-> Package deposited in locker " << static_cast<int>(header.lockerId) << " with PIN.\n";
-                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
-                    }
-                }
+            if (lockers[header.lockerId].isOccupied) {
+                std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already full.\n";
+                sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::BOX_FULL);
+            } else {
+                lockers[header.lockerId].isOccupied = true;
+                std::memcpy(lockers[header.lockerId].pin, pkgData.pin, 5);
+                std::cout << "-> Package deposited in locker " << static_cast<int>(header.lockerId) << " with PIN.\n";
+                sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
             }
             break;
         }
 
         case MessageType::PICKUP_PACKAGE: {
-            PackageData pkgData;
-            if (header.dataLength == sizeof(PackageData)) {
-                int bytesRead = recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
-                if (bytesRead == sizeof(PackageData)) {
-                    if (!lockers[header.lockerId].isOccupied) {
-                        std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already empty.\n";
-                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
-                    } else if (std::memcmp(lockers[header.lockerId].pin, pkgData.pin, 5) != 0) {
-                        std::cout << "-> Incorrect PIN for locker " << static_cast<int>(header.lockerId) << ".\n";
-                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::UNAUTHORIZED);
-                    } else {
-                        lockers[header.lockerId].isOccupied = false;
-                        std::memset(lockers[header.lockerId].pin, 0, 5);
-                        std::cout << "-> Package picked up from locker " << static_cast<int>(header.lockerId) << ".\n";
-                        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
-                    }
-                }
+            if (!lockers[header.lockerId].isOccupied) {
+                std::cout << "-> Locker " << static_cast<int>(header.lockerId) << " is already empty.\n";
+                sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
+            } else if (std::memcmp(lockers[header.lockerId].pin, pkgData.pin, 5) != 0) {
+                std::cout << "-> Incorrect PIN for locker " << static_cast<int>(header.lockerId) << ".\n";
+                sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::UNAUTHORIZED);
+            } else {
+                lockers[header.lockerId].isOccupied = false;
+                std::memset(lockers[header.lockerId].pin, 0, 5);
+                std::cout << "-> Package picked up from locker " << static_cast<int>(header.lockerId) << ".\n";
+                sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::SUCCESS);
             }
             break;
         }
@@ -93,15 +82,14 @@ void handleMessage(SOCKET sock, const MessageHeader& header, std::vector<LockerS
 
 int main() {
     WSADATA wsaData;
-    int wsaResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (wsaResult != 0) {
-        std::cerr << "WSAStartup failed: " << wsaResult << "\n";
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed.\n";
         return 1;
     }
 
     SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (serverSocket == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed: " << WSAGetLastError() << "\n";
+        std::cerr << "Socket creation failed.\n";
         WSACleanup();
         return 1;
     }
@@ -112,14 +100,14 @@ int main() {
     serverAddr.sin_port = htons(SERVER_PORT);
 
     if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        std::cerr << "Bind failed: " << WSAGetLastError() << "\n";
+        std::cerr << "Bind failed.\n";
         closesocket(serverSocket);
         WSACleanup();
         return 1;
     }
 
     if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
-        std::cerr << "Listen failed: " << WSAGetLastError() << "\n";
+        std::cerr << "Listen failed.\n";
         closesocket(serverSocket);
         WSACleanup();
         return 1;
@@ -129,14 +117,13 @@ int main() {
 
     std::vector<LockerServerState> lockers(MAX_LOCKERS);
     std::vector<SOCKET> clientSockets;
+    clientSockets.push_back(serverSocket);
 
     while (true) {
         fd_set readfds;
         FD_ZERO(&readfds);
 
-        FD_SET(serverSocket, &readfds);
         SOCKET maxSocket = serverSocket;
-
         for (SOCKET sock : clientSockets) {
             FD_SET(sock, &readfds);
             if (sock > maxSocket) {
@@ -146,7 +133,7 @@ int main() {
 
         int activity = select(0, &readfds, nullptr, nullptr, nullptr);
         if (activity == SOCKET_ERROR) {
-            std::cerr << "Select failed: " << WSAGetLastError() << "\n";
+            std::cerr << "Select error: " << WSAGetLastError() << "\n";
             break;
         }
 
@@ -154,30 +141,26 @@ int main() {
             sockaddr_in clientAddr{};
             int clientAddrSize = sizeof(clientAddr);
             SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
-            
+
             if (clientSocket != INVALID_SOCKET) {
                 clientSockets.push_back(clientSocket);
-                std::cout << "New client connected. Total clients: " << clientSockets.size() << "\n";
+                std::cout << "New client connected. Total clients: " << clientSockets.size() - 1 << "\n";
             }
         }
 
-        for (auto it = clientSockets.begin(); it != clientSockets.end(); ) {
+        for (auto it = clientSockets.begin() + 1; it != clientSockets.end();) {
             SOCKET sock = *it;
             if (FD_ISSET(sock, &readfds)) {
-                MessageHeader header;
+                MessageHeader header{};
                 int bytesReceived = recv(sock, reinterpret_cast<char*>(&header), sizeof(MessageHeader), 0);
 
-                if (bytesReceived <= 0) {
-                    closesocket(sock);
-                    it = clientSockets.erase(it);
-                    std::cout << "Client disconnected. Total clients: " << clientSockets.size() << "\n";
-                } else if (bytesReceived == sizeof(MessageHeader)) {
+                if (bytesReceived > 0) {
                     handleMessage(sock, header, lockers);
                     ++it;
                 } else {
-                    std::cerr << "Incomplete header received. Disconnecting client.\n";
                     closesocket(sock);
                     it = clientSockets.erase(it);
+                    std::cout << "Client disconnected. Total clients: " << clientSockets.size() - 1 << "\n";
                 }
             } else {
                 ++it;
@@ -186,10 +169,6 @@ int main() {
     }
 
     closesocket(serverSocket);
-    for (SOCKET sock : clientSockets) {
-        closesocket(sock);
-    }
     WSACleanup();
-
     return 0;
 }
