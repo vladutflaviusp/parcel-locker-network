@@ -87,15 +87,11 @@ void Server::run() {
         for (auto it = clientSockets.begin(); it != clientSockets.end();) {
             SOCKET sock = *it;
             if (FD_ISSET(sock, &readfds)) {
-                char buffer[sizeof(ClientMessage)];
-                int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
-
-                if (bytesReceived <= 0) {
+                if (!handleClientMessage(sock)) {
                     closesocket(sock);
                     it = clientSockets.erase(it);
                     LOG_INFO("Client disconnected. Total clients: " + std::to_string(clientSockets.size()));
                 } else {
-                    handleClientMessage(sock);
                     ++it;
                 }
             } else {
