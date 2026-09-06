@@ -14,7 +14,7 @@ private:
     LockerManager lockerManager;
     const int PORT = 8080;
 
-    void handleClientMessage(SOCKET clientSocket);
+    bool handleClientMessage(SOCKET clientSocket);
 
 public:
     Server();
