@@ -1,41 +1,19 @@
 #include <iostream>
-#include <cstring>
 #include <winsock2.h>
+#include <cstring>
 #include <ws2tcpip.h>
-#include "../include/protocol.hpp"
+#include <limits>
+#include "protocol.hpp"
 
 #pragma comment(lib, "ws2_32.lib")
 
-void sendRequest(SOCKET sock, MessageType type, uint8_t lockerId, const char* pin = nullptr) {
-    MessageHeader header{};
-    header.type = type;
-    header.lockerId = lockerId;
-    header.status = StatusCode::SUCCESS;
-
-    PackageData pkgData{};
-    if (pin) {
-        std::strncpy(pkgData.pin, pin, sizeof(pkgData.pin) - 1);
-        header.dataLength = sizeof(PackageData);
-    } else {
-        header.dataLength = 0;
-    }
-
-    // Trimitem antetul
-    send(sock, reinterpret_cast<const char*>(&header), sizeof(MessageHeader), 0);
-
-    // Trimitem corpul pachetului dacă există
-    if (header.dataLength > 0) {
-        send(sock, reinterpret_cast<const char*>(&pkgData), sizeof(PackageData), 0);
-    }
-
-    // Citim răspunsul de la server
-    MessageHeader responseHeader{};
-    int bytesReceived = recv(sock, reinterpret_cast<char*>(&responseHeader), sizeof(MessageHeader), 0);
-    if (bytesReceived == sizeof(MessageHeader)) {
-        std::cout << "[Client] Response received - Status Code: " << static_cast<uint16_t>(responseHeader.status) << "\n";
-    } else {
-        std::cout << "[Client] Failed to receive proper response.\n";
-    }
+void printMenu() {
+    std::cout << "\n=== PARCEL LOCKER CLIENT ===\n";
+    std::cout << "1. Status Check / Login\n";
+    std::cout << "2. Deposit Package\n";
+    std::cout << "3. Pickup Package\n";
+    std::cout << "0. Exit\n";
+    std::cout << "Choose an option: ";
 }
 
 int main() {
@@ -45,49 +23,96 @@ int main() {
         return 1;
     }
 
-    SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (clientSocket == INVALID_SOCKET) {
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
         std::cerr << "Socket creation failed.\n";
         WSACleanup();
         return 1;
     }
 
-    sockaddr_in serverAddr{};
+    sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_port = htons(SERVER_PORT);
     inet_pton(AF_INET, "127.0.0.1", &serverAddr.sin_addr);
 
-    if (connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+    if (connect(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         std::cerr << "Connection to server failed.\n";
-        closesocket(clientSocket);
+        closesocket(sock);
         WSACleanup();
         return 1;
     }
 
-    std::cout << "Connected to Parcel Locker Server.\n";
+    std::cout << "Connected to Parcel Locker Server on port " << SERVER_PORT << ".\n";
 
-    // Test 1: Depunere cu succes pe lockerul 1
-    std::cout << "\n--- Test: Normal Deposit (Locker 1) --- \n";
-    sendRequest(clientSocket, MessageType::DEPOSIT_PACKAGE, 1, "4321");
+    while (true) {
+        printMenu();
+        
+        long long choiceInput;
+        std::cin >> choiceInput;
 
-    // Test 2: Încercare de depunere pe același locker ocupat (Așteptat: BOX_FULL)
-    std::cout << "\n--- Test: Box Full Error (Locker 1) --- \n";
-    sendRequest(clientSocket, MessageType::DEPOSIT_PACKAGE, 1, "9999");
+        if (std::cin.fail()) {
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "[CLIENT ERROR] Invalid input! Please enter a valid number for the menu.\n";
+            continue;
+        }
 
-    // Test 3: Ridicare cu PIN greșit (Așteptat: UNAUTHORIZED)
-    std::cout << "\n--- Test: Wrong PIN Error (Locker 1) --- \n";
-    sendRequest(clientSocket, MessageType::PICKUP_PACKAGE, 1, "0000");
+        if (choiceInput == 0) {
+            break;
+        }
 
-    // Test 4: Accesare ID invalid de locker (Așteptat: NOT_FOUND)
-    std::cout << "\n--- Test: Invalid Locker ID Error (Locker 99) --- \n";
-    sendRequest(clientSocket, MessageType::DEPOSIT_PACKAGE, 99, "1234");
+        if (choiceInput < 1 || choiceInput > 3) {
+            std::cout << "[CLIENT ERROR] Invalid choice. Please choose an option between 0 and 3.\n";
+            continue;
+        }
 
-    // Test 5: Ridicare cu PIN corect (Așteptat: SUCCESS)
-    std::cout << "\n--- Test: Normal Pickup (Locker 1) --- \n";
-    sendRequest(clientSocket, MessageType::PICKUP_PACKAGE, 1, "4321");
+        ClientMessage msg;
+        msg.type = static_cast<uint8_t>(choiceInput);
 
-    closesocket(clientSocket);
+        long long lockerIdInput;
+        std::cout << "Enter Locker ID (0 - " << (MAX_LOCKERS - 1) << "): ";
+        std::cin >> lockerIdInput;
+
+        if (std::cin.fail()) {
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cout << "[CLIENT ERROR] Invalid Locker ID format! Please enter a numeric value.\n";
+            continue;
+        }
+
+        if (lockerIdInput < 0 || lockerIdInput > 255) {
+            std::cout << "[CLIENT ERROR] Locker ID out of range! Please enter a value between 0 and " << (MAX_LOCKERS - 1) << ".\n";
+            continue;
+        }
+
+        msg.lockerId = static_cast<uint8_t>(lockerIdInput);
+
+        if (choiceInput == 2 || choiceInput == 3) {
+            std::cout << "Enter 4-digit PIN: ";
+            std::string pinStr;
+            std::cin >> pinStr;
+            std::snprintf(msg.pin, sizeof(msg.pin), "%s", pinStr.c_str());
+        } else {
+            std::memset(msg.pin, 0, sizeof(msg.pin));
+        }
+
+        send(sock, (char*)&msg, sizeof(msg), 0);
+
+        ServerResponse response;
+        int bytesReceived = recv(sock, (char*)&response, sizeof(response), 0);
+        if (bytesReceived > 0) {
+            std::cout << "[SERVER RESPONSE] Status Code: " << response.status;
+            if (msg.type == 1 && response.status == 200) {
+                std::cout << " | Locker is: " << (response.isOccupied ? "OCCUPIED" : "FREE");
+            }
+            std::cout << "\n";
+        } else {
+            std::cerr << "Server disconnected or error receiving response.\n";
+            break;
+        }
+    }
+
+    closesocket(sock);
     WSACleanup();
-
     return 0;
 }
