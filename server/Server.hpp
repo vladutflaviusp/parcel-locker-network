@@ -2,6 +2,7 @@
 #define SERVER_HPP
 
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <vector>
 #include "LockerManager.hpp"
 #include "Logger.hpp"
@@ -18,6 +19,7 @@ private:
 public:
     Server();
     ~Server();
+
     bool initialize();
     void run();
 };
