@@ -1,156 +1,146 @@
 #include "Server.hpp"
+#include "protocol.hpp"
 #include <iostream>
-#include <cstring>
-
-#pragma comment(lib, "ws2_32.lib")
+#include <algorithm>
 
 Server::Server() : serverSocket(INVALID_SOCKET) {}
 
 Server::~Server() {
-    closesocket(serverSocket);
+    for (SOCKET sock : clientSockets) {
+        closesocket(sock);
+    }
+    if (serverSocket != INVALID_SOCKET) {
+        closesocket(serverSocket);
+    }
     WSACleanup();
 }
 
 bool Server::initialize() {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        std::cerr << "WSAStartup failed.\n";
+        LOG_ERROR("WSAStartup failed.");
         return false;
     }
 
-    serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed.\n";
+        LOG_ERROR("Socket creation failed.");
         WSACleanup();
         return false;
     }
 
-    sockaddr_in serverAddr{};
+    sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(SERVER_PORT);
+    serverAddr.sin_port = htons(PORT);
 
-    if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
-        std::cerr << "Bind failed.\n";
+    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        LOG_ERROR("Bind failed.");
+        closesocket(serverSocket);
+        WSACleanup();
         return false;
     }
 
     if (listen(serverSocket, SOMAXCONN) == SOCKET_ERROR) {
-        std::cerr << "Listen failed.\n";
+        LOG_ERROR("Listen failed.");
+        closesocket(serverSocket);
+        WSACleanup();
         return false;
     }
 
-    clientSockets.push_back(serverSocket);
-    std::cout << "Parcel Locker Network - Clean Architecture Server running on port " << SERVER_PORT << "...\n";
+    LOG_INFO("Parcel Locker Network - Clean Architecture Server running on port " + std::to_string(PORT) + "...");
     return true;
 }
 
-void Server::sendResponse(SOCKET sock, MessageType type, uint8_t lockerId, StatusCode status) {
-    MessageHeader response{};
-    response.type = type;
-    response.lockerId = lockerId;
-    response.status = status;
-    response.dataLength = 0;
-
-    send(sock, reinterpret_cast<const char*>(&response), sizeof(MessageHeader), 0);
-}
-
-void Server::handleMessage(SOCKET sock, const MessageHeader& header) {
-    std::cout << "Received message type: " << static_cast<int>(header.type) 
-              << " for locker ID: " << static_cast<int>(header.lockerId) << "\n";
-
-    PackageData pkgData{};
-    bool hasData = (header.dataLength == sizeof(PackageData));
-    if (hasData) {
-        recv(sock, reinterpret_cast<char*>(&pkgData), sizeof(PackageData), 0);
-    }
-
-    if (lockerManager.isInvalidId(header.lockerId)) {
-        sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, StatusCode::NOT_FOUND);
-        return;
-    }
-
-    StatusCode status = StatusCode::BAD_REQUEST;
-
-    switch (header.type) {
-        case MessageType::CLIENT_LOGIN:
-            std::cout << "-> Processing client login...\n";
-            status = StatusCode::SUCCESS;
-            break;
-
-        case MessageType::DEPOSIT_PACKAGE:
-            status = lockerManager.deposit(header.lockerId, pkgData.pin);
-            if (status == StatusCode::SUCCESS) {
-                std::cout << "-> Package deposited in locker " << static_cast<int>(header.lockerId) << ".\n";
-            } else {
-                std::cout << "-> Deposit failed for locker " << static_cast<int>(header.lockerId) << " (Status: " << static_cast<int>(status) << ").\n";
-            }
-            break;
-
-        case MessageType::PICKUP_PACKAGE:
-            status = lockerManager.pickup(header.lockerId, pkgData.pin);
-            if (status == StatusCode::SUCCESS) {
-                std::cout << "-> Package picked up from locker " << static_cast<int>(header.lockerId) << ".\n";
-            } else {
-                std::cout << "-> Pickup failed for locker " << static_cast<int>(header.lockerId) << " (Status: " << static_cast<int>(status) << ").\n";
-            }
-            break;
-
-        default:
-            std::cout << "-> Unknown message type received.\n";
-            break;
-    }
-
-    sendResponse(sock, MessageType::SERVER_RESPONSE, header.lockerId, status);
-}
-
 void Server::run() {
-    while (true) {
-        fd_set readfds;
-        FD_ZERO(&readfds);
+    fd_set readfds;
 
-        SOCKET maxSocket = serverSocket;
+    while (true) {
+        FD_ZERO(&readfds);
+        FD_SET(serverSocket, &readfds);
+
+        SOCKET maxFd = serverSocket;
         for (SOCKET sock : clientSockets) {
             FD_SET(sock, &readfds);
-            if (sock > maxSocket) {
-                maxSocket = sock;
+            if (sock > maxFd) {
+                maxFd = sock;
             }
         }
 
-        int activity = select(0, &readfds, nullptr, nullptr, nullptr);
+        int activity = select(maxFd + 1, &readfds, NULL, NULL, NULL);
         if (activity == SOCKET_ERROR) {
-            std::cerr << "Select error: " << WSAGetLastError() << "\n";
+            LOG_ERROR("Select error.");
             break;
         }
 
         if (FD_ISSET(serverSocket, &readfds)) {
-            sockaddr_in clientAddr{};
+            sockaddr_in clientAddr;
             int clientAddrSize = sizeof(clientAddr);
-            SOCKET clientSocket = accept(serverSocket, (sockaddr*)&clientAddr, &clientAddrSize);
-
+            SOCKET clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrSize);
+            
             if (clientSocket != INVALID_SOCKET) {
                 clientSockets.push_back(clientSocket);
-                std::cout << "New client connected. Total clients: " << clientSockets.size() - 1 << "\n";
+                LOG_INFO("New client connected. Total clients: " + std::to_string(clientSockets.size()));
             }
         }
 
-        for (auto it = clientSockets.begin() + 1; it != clientSockets.end();) {
+        for (auto it = clientSockets.begin(); it != clientSockets.end();) {
             SOCKET sock = *it;
             if (FD_ISSET(sock, &readfds)) {
-                MessageHeader header{};
-                int bytesReceived = recv(sock, reinterpret_cast<char*>(&header), sizeof(MessageHeader), 0);
+                char buffer[sizeof(ClientMessage)];
+                int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
 
-                if (bytesReceived > 0) {
-                    handleMessage(sock, header);
-                    ++it;
-                } else {
+                if (bytesReceived <= 0) {
                     closesocket(sock);
                     it = clientSockets.erase(it);
-                    std::cout << "Client disconnected. Total clients: " << clientSockets.size() - 1 << "\n";
+                    LOG_INFO("Client disconnected. Total clients: " + std::to_string(clientSockets.size()));
+                } else {
+                    handleClientMessage(sock);
+                    ++it;
                 }
             } else {
                 ++it;
             }
         }
     }
+}
+
+void Server::handleClientMessage(SOCKET clientSocket) {
+    ClientMessage clientMsg;
+    int bytesReceived = recv(clientSocket, (char*)&clientMsg, sizeof(clientMsg), 0);
+    if (bytesReceived <= 0) return;
+
+    LOG_INFO("Received message type: " + std::to_string(clientMsg.type) + " for locker ID: " + std::to_string(clientMsg.lockerId));
+
+    ServerResponse response;
+    response.status = static_cast<int>(StatusCode::SUCCESS);
+
+    if (clientMsg.type == 1) {
+        // Status Check
+        if (lockerManager.isInvalidId(clientMsg.lockerId)) {
+            response.status = static_cast<int>(StatusCode::NOT_FOUND);
+        }
+    } 
+    else if (clientMsg.type == 2) {
+        // Deposit
+        StatusCode res = lockerManager.deposit(clientMsg.lockerId, clientMsg.pin);
+        response.status = static_cast<int>(res);
+        if (res == StatusCode::SUCCESS) {
+            LOG_INFO("-> Package deposited in locker " + std::to_string(clientMsg.lockerId) + ".");
+        } else {
+            LOG_WARN("-> Deposit failed for locker " + std::to_string(clientMsg.lockerId) + " (Status: " + std::to_string(response.status) + ").");
+        }
+    } 
+    else if (clientMsg.type == 3) {
+        // Pickup
+        StatusCode res = lockerManager.pickup(clientMsg.lockerId, clientMsg.pin);
+        response.status = static_cast<int>(res);
+        if (res == StatusCode::SUCCESS) {
+            LOG_INFO("-> Package picked up from locker " + std::to_string(clientMsg.lockerId) + ".");
+        } else {
+            LOG_WARN("-> Pickup failed for locker " + std::to_string(clientMsg.lockerId) + " (Status: " + std::to_string(response.status) + ").");
+        }
+    }
+
+    send(clientSocket, (char*)&response, sizeof(response), 0);
 }

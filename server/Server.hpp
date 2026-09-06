@@ -1,19 +1,19 @@
-#pragma once
+#ifndef SERVER_HPP
+#define SERVER_HPP
 
 #include <winsock2.h>
-#include <ws2tcpip.h>
 #include <vector>
-#include "../include/protocol.hpp"
 #include "LockerManager.hpp"
+#include "Logger.hpp"
 
 class Server {
 private:
     SOCKET serverSocket;
-    LockerManager lockerManager;
     std::vector<SOCKET> clientSockets;
+    LockerManager lockerManager;
+    const int PORT = 8080;
 
-    void sendResponse(SOCKET sock, MessageType type, uint8_t lockerId, StatusCode status);
-    void handleMessage(SOCKET sock, const MessageHeader& header);
+    void handleClientMessage(SOCKET clientSocket);
 
 public:
     Server();
@@ -21,3 +21,5 @@ public:
     bool initialize();
     void run();
 };
+
+#endif
