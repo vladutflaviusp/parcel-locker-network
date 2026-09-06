@@ -101,42 +101,58 @@ void Server::run() {
     }
 }
 
-void Server::handleClientMessage(SOCKET clientSocket) {
+bool Server::handleClientMessage(SOCKET clientSocket) {
     ClientMessage clientMsg;
     int bytesReceived = recv(clientSocket, (char*)&clientMsg, sizeof(clientMsg), 0);
-    if (bytesReceived <= 0) return;
+    
+    if (bytesReceived <= 0) {
+        return false;
+    }
 
     LOG_INFO("Received message type: " + std::to_string(clientMsg.type) + " for locker ID: " + std::to_string(clientMsg.lockerId));
 
     ServerResponse response;
-    response.status = static_cast<int>(StatusCode::SUCCESS);
+    response.isOccupied = 0;
 
-    if (clientMsg.type == 1) {
-        // Status Check
-        if (lockerManager.isInvalidId(clientMsg.lockerId)) {
-            response.status = static_cast<int>(StatusCode::NOT_FOUND);
-        }
+    // Validăm ID-ul primit
+    if (clientMsg.lockerId >= MAX_LOCKERS) {
+        response.status = static_cast<uint16_t>(StatusCode::NOT_FOUND);
+        LOG_WARN("-> Invalid locker ID " + std::to_string(clientMsg.lockerId) + " (Out of bounds).");
+    }
+    else if (clientMsg.type == 1) {
+        // Status Check - preluat corect din LockerManager
+        response.status = static_cast<uint16_t>(StatusCode::SUCCESS);
+        response.isOccupied = lockerManager.isOccupied(clientMsg.lockerId) ? 1 : 0;
     } 
     else if (clientMsg.type == 2) {
         // Deposit
         StatusCode res = lockerManager.deposit(clientMsg.lockerId, clientMsg.pin);
-        response.status = static_cast<int>(res);
+        response.status = static_cast<uint16_t>(res);
         if (res == StatusCode::SUCCESS) {
             LOG_INFO("-> Package deposited in locker " + std::to_string(clientMsg.lockerId) + ".");
         } else {
-            LOG_WARN("-> Deposit failed for locker " + std::to_string(clientMsg.lockerId) + " (Status: " + std::to_string(response.status) + ").");
+            LOG_WARN("-> Deposit failed for locker " + std::to_string(clientMsg.lockerId) + ".");
         }
     } 
     else if (clientMsg.type == 3) {
         // Pickup
         StatusCode res = lockerManager.pickup(clientMsg.lockerId, clientMsg.pin);
-        response.status = static_cast<int>(res);
+        response.status = static_cast<uint16_t>(res);
         if (res == StatusCode::SUCCESS) {
             LOG_INFO("-> Package picked up from locker " + std::to_string(clientMsg.lockerId) + ".");
         } else {
-            LOG_WARN("-> Pickup failed for locker " + std::to_string(clientMsg.lockerId) + " (Status: " + std::to_string(response.status) + ").");
+            LOG_WARN("-> Pickup failed for locker " + std::to_string(clientMsg.lockerId) + ".");
         }
+    } 
+    else {
+        response.status = static_cast<uint16_t>(StatusCode::BAD_REQUEST);
     }
 
-    send(clientSocket, (char*)&response, sizeof(response), 0);
+    int bytesSent = send(clientSocket, (char*)&response, sizeof(response), 0);
+    if (bytesSent == SOCKET_ERROR) {
+        LOG_ERROR("Failed to send response to client.");
+        return false;
+    }
+
+    return true;
 }
