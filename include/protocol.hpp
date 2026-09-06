@@ -30,6 +30,7 @@ struct ClientMessage {
 
 struct ServerResponse {
     uint16_t status;
+    uint8_t isOccupied;
 };
 #pragma pack(pop)
 
