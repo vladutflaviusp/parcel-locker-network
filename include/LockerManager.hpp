@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LOCKER_MANAGER_HPP
+#define LOCKER_MANAGER_HPP
 
 #include <vector>
 #include <cstring>
@@ -16,15 +17,15 @@ private:
 public:
     LockerManager() : lockers(MAX_LOCKERS) {}
 
-    bool isInvalidId(uint8_t lockerId) const {
-        return lockerId >= MAX_LOCKERS;
-    }
-
     bool isOccupied(uint8_t lockerId) const {
+        if (lockerId >= MAX_LOCKERS) return false;
         return lockers[lockerId].isOccupied;
     }
 
     StatusCode deposit(uint8_t lockerId, const char* pin) {
+        if (lockerId >= MAX_LOCKERS) {
+            return StatusCode::NOT_FOUND;
+        }
         if (lockers[lockerId].isOccupied) {
             return StatusCode::BOX_FULL;
         }
@@ -34,6 +35,9 @@ public:
     }
 
     StatusCode pickup(uint8_t lockerId, const char* pin) {
+        if (lockerId >= MAX_LOCKERS) {
+            return StatusCode::NOT_FOUND;
+        }
         if (!lockers[lockerId].isOccupied) {
             return StatusCode::NOT_FOUND;
         }
@@ -45,3 +49,5 @@ public:
         return StatusCode::SUCCESS;
     }
 };
+
+#endif
