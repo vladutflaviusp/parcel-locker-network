@@ -7,7 +7,7 @@ const int SERVER_PORT = 8080;
 const int MAX_LOCKERS = 10;
 
 enum class MessageType : uint8_t {
-    CLIENT_LOGIN = 1,     
+    CLIENT_LOGIN = 1,    
     DEPOSIT_PACKAGE = 2,  
     PICKUP_PACKAGE = 3,   
     SERVER_RESPONSE = 4  
@@ -21,6 +21,16 @@ enum class StatusCode : uint16_t {
     BOX_FULL = 507
 };
 
+struct ClientMessage {
+    uint8_t type;
+    uint8_t lockerId;
+    char pin[5];
+};
+
+struct ServerResponse {
+    uint16_t status;
+};
+
 struct MessageHeader {
     MessageType type;
     uint8_t lockerId;    
@@ -32,6 +42,5 @@ struct PackageData {
     char pin[5];         
     bool isOccupied;    
 };
-
 
 #endif
