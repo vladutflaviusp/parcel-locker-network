@@ -21,6 +21,7 @@ enum class StatusCode : uint16_t {
     BOX_FULL = 507
 };
 
+#pragma pack(push, 1)
 struct ClientMessage {
     uint8_t type;
     uint8_t lockerId;
@@ -30,6 +31,7 @@ struct ClientMessage {
 struct ServerResponse {
     uint16_t status;
 };
+#pragma pack(pop)
 
 struct MessageHeader {
     MessageType type;
