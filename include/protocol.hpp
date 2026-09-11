@@ -18,7 +18,10 @@ enum class StatusCode : uint16_t {
     BAD_REQUEST = 400,
     UNAUTHORIZED = 401,
     NOT_FOUND = 404,
-    BOX_FULL = 507
+    BOX_FULL = 507,
+    LockerAlreadyOccupied = 409,
+    InvalidPin = 422,
+    Error = 500
 };
 
 #pragma pack(push, 1)
@@ -42,7 +45,7 @@ struct MessageHeader {
 };
 
 struct PackageData {
-    char pin[5];         
+    char pin[5];        
     bool isOccupied;    
 };
 
