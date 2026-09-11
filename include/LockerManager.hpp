@@ -2,6 +2,7 @@
 #define LOCKER_MANAGER_HPP
 
 #include "Database.hpp"
+#include "protocol.hpp"
 #include <string>
 
 class LockerManager {
@@ -25,41 +26,45 @@ public:
         return occupied;
     }
 
-    bool occupyLocker(int lockerId, const std::string& pin) {
+    StatusCode deposit(int lockerId, const std::string& pin) {
+        if (isOccupied(lockerId)) {
+            return StatusCode::LockerAlreadyOccupied;
+        }
+
         std::string query = "INSERT OR REPLACE INTO lockers (id, is_occupied, pin) VALUES (?, 1, ?);";
         sqlite3_stmt* stmt;
-        bool success = false;
+        StatusCode status = StatusCode::Error;
 
         if (sqlite3_prepare_v2(db.getHandle(), query.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, lockerId);
             sqlite3_bind_text(stmt, 2, pin.c_str(), -1, SQLITE_STATIC);
 
             if (sqlite3_step(stmt) == SQLITE_DONE) {
-                success = true;
+                status = StatusCode::SUCCESS;
             }
             sqlite3_finalize(stmt);
         }
-        return success;
+        return status;
     }
 
-    bool releaseLocker(int lockerId, const std::string& pin) {
+    StatusCode pickup(int lockerId, const std::string& pin) {
         if (!verifyPin(lockerId, pin)) {
-            return false;
+            return StatusCode::InvalidPin;
         }
 
         std::string query = "UPDATE lockers SET is_occupied = 0, pin = '' WHERE id = ?;";
         sqlite3_stmt* stmt;
-        bool success = false;
+        StatusCode status = StatusCode::Error;
 
         if (sqlite3_prepare_v2(db.getHandle(), query.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int(stmt, 1, lockerId);
 
             if (sqlite3_step(stmt) == SQLITE_DONE) {
-                success = true;
+                status = StatusCode::SUCCESS;
             }
             sqlite3_finalize(stmt);
         }
-        return success;
+        return status;
     }
 
 private:
