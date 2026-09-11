@@ -1,9 +1,10 @@
+// Server.cpp
 #include "Server.hpp"
 #include "protocol.hpp"
 #include <iostream>
 #include <algorithm>
 
-Server::Server() : serverSocket(INVALID_SOCKET) {}
+Server::Server(int port) : db("lockers.db"), lockerManager(db), serverSocket(INVALID_SOCKET), port(port) {}
 
 Server::~Server() {
     for (SOCKET sock : clientSockets) {
@@ -32,7 +33,7 @@ bool Server::initialize() {
     sockaddr_in serverAddr;
     serverAddr.sin_family = AF_INET;
     serverAddr.sin_addr.s_addr = INADDR_ANY;
-    serverAddr.sin_port = htons(PORT);
+    serverAddr.sin_port = htons(port);
 
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         LOG_ERROR("Bind failed.");
@@ -48,7 +49,7 @@ bool Server::initialize() {
         return false;
     }
 
-    LOG_INFO("Parcel Locker Network - Clean Architecture Server running on port " + std::to_string(PORT) + "...");
+    LOG_INFO("Parcel Locker Network - Clean Architecture Server running on port " + std::to_string(port) + "...");
     return true;
 }
 
@@ -114,18 +115,15 @@ bool Server::handleClientMessage(SOCKET clientSocket) {
     ServerResponse response;
     response.isOccupied = 0;
 
-    // Validăm ID-ul primit
     if (clientMsg.lockerId >= MAX_LOCKERS) {
         response.status = static_cast<uint16_t>(StatusCode::NOT_FOUND);
         LOG_WARN("-> Invalid locker ID " + std::to_string(clientMsg.lockerId) + " (Out of bounds).");
     }
     else if (clientMsg.type == 1) {
-        // Status Check - preluat corect din LockerManager
         response.status = static_cast<uint16_t>(StatusCode::SUCCESS);
         response.isOccupied = lockerManager.isOccupied(clientMsg.lockerId) ? 1 : 0;
     } 
     else if (clientMsg.type == 2) {
-        // Deposit
         StatusCode res = lockerManager.deposit(clientMsg.lockerId, clientMsg.pin);
         response.status = static_cast<uint16_t>(res);
         if (res == StatusCode::SUCCESS) {
@@ -135,7 +133,6 @@ bool Server::handleClientMessage(SOCKET clientSocket) {
         }
     } 
     else if (clientMsg.type == 3) {
-        // Pickup
         StatusCode res = lockerManager.pickup(clientMsg.lockerId, clientMsg.pin);
         response.status = static_cast<uint16_t>(res);
         if (res == StatusCode::SUCCESS) {
