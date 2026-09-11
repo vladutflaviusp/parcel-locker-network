@@ -3,4 +3,4 @@
 *.out
 *.o
 build/
-.vscode
+.vscodelockers.db
