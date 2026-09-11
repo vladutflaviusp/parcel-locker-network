@@ -4,3 +4,5 @@
 *.o
 build/
 .vscodelockers.db
+cmake-3.28.3-windows-x86_64/
+cmake.zip
